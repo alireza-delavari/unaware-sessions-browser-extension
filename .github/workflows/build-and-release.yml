@@ -53,24 +53,16 @@ jobs:
           mkdir -p release
           cd dist
           zip -r ../release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip .
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release and Upload ZIP
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
-          release_name: Unaware Sessions v${{ steps.get_version.outputs.version }}
+          name: Unaware Sessions v${{ steps.get_version.outputs.version }}
           body: |
             Automated build of Unaware Sessions (dist) and attached ZIP asset.
           draft: false
           prerelease: false
-      - name: Upload release asset (ZIP)
-        uses: actions/upload-release-asset@v1
+          files: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
-          asset_name: unaware-sessions-v${{ steps.get_version.outputs.version }}.zip
-          asset_content_type: application/zip
+          
