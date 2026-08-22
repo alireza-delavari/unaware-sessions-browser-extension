@@ -6,7 +6,7 @@ on:
       ref:
         description: 'Branch or tag to run the workflow on'
         required: false
-        default: 'main'
+        default: 'master'
       release_tag:
         description: 'Optional release tag (overrides manifest.json version)'
         required: false
@@ -64,6 +64,7 @@ jobs:
             Automated build of Unaware Sessions (dist) and attached ZIP asset.
           draft: false
           prerelease: false
+         token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload release asset (ZIP)
         uses: actions/upload-release-asset@v1
