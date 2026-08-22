@@ -1,0 +1,73 @@
+name: Build and release Chrome extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to run the workflow on'
+        required: false
+        default: 'main'
+      release_tag:
+        description: 'Optional release tag (overrides manifest.json version)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build, package and publish release asset
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Get version from manifest.json or input
+        id: get_version
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "version=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(node -p \"require('./manifest.json').version\")" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (vite)
+        run: npm run build
+
+      - name: Package dist into ZIP
+        run: |
+          mkdir -p release
+          cd dist
+          zip -r ../release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip .
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          release_name: Unaware Sessions v${{ steps.get_version.outputs.version }}
+          body: |
+            Automated build of Unaware Sessions (dist) and attached ZIP asset.
+          draft: false
+          prerelease: false
+
+      - name: Upload release asset (ZIP)
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
+          asset_name: unaware-sessions-v${{ steps.get_version.outputs.version }}.zip
+          asset_content_type: application/zip
