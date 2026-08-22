@@ -67,6 +67,8 @@ jobs:
           prerelease: false
       - name: Upload release asset (ZIP)
         uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
