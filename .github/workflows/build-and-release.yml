@@ -53,7 +53,8 @@ jobs:
           mkdir -p release
           cd dist
           zip -r ../release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip .
-      - name: Create Release and Upload ZIP
+
+      - name: Create GitHub Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
@@ -65,4 +66,3 @@ jobs:
           files: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
