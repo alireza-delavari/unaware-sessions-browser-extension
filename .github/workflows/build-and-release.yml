@@ -1,0 +1,69 @@
+name: Build and release Chrome extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or tag to run the workflow on'
+        required: false
+        default: 'master'
+      release_tag:
+        description: 'Optional release tag (overrides manifest.json version)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build, package and publish release asset
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Get version from manifest.json or input
+        id: get_version
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "version=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+          else
+            version=$(node -e 'console.log(require("./manifest.json").version)')
+            echo "version=${version}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (vite)
+        run: npm run build
+
+      - name: Package dist into ZIP
+        run: |
+          mkdir -p release
+          cd dist
+          zip -r ../release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip .
+
+      - name: Create GitHub Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Unaware Sessions v${{ steps.get_version.outputs.version }}
+          target_commitish: ${{ github.event.inputs.ref }}
+          body: |
+            Automated build of Unaware Sessions (dist) and attached ZIP asset.
+          draft: false
+          prerelease: false
+          files: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
