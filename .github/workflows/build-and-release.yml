@@ -1,69 +1,151 @@
-name: Build and release Chrome extension
+# ==============================================================================
+# Chrome Extension Key Setup & Release Guide
+# ==============================================================================
+#
+# 1. GENERATE THE PRIVATE KEY (.pem):
+#    Run this in your terminal (using OpenSSL):
+#      openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt -out extension_key.pem
+#
+# 2. EXTRACT THE PUBLIC KEY (BASE64):
+#    Run this command to get the single-line base64 public key:
+#      openssl rsa -in extension_key.pem -pubout -outform DER | openssl base64 -A
+#
+# 3. CONFIGURE SECRETS & INPUTS:
+#    - Private Key:
+#        Go to GitHub Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#        Name: CRX_PRIVATE_KEY
+#        Value: Paste the entire content of 'extension_key.pem' (including BEGIN/END lines).
+#        Alternatively, pass it directly into the 'private_key' workflow input when running manually.
+#    - Public Key:
+#        Pass via the 'public_key' input when running manually, or set it as a repository secret
+#        named 'CRX_PUBLIC_KEY'.
+#
+# 4. ABOUT THE 'manifest.json' "key" ATTRIBUTE:
+#    Chromium calculates an extension's 32-character ID from its public key. By default,
+#    unpacked or dropped archives use a temporary path-based identity that changes on every install.
+#    Adding the "key" attribute containing the base64 DER public key forces Chromium to
+#    assign the exact same Extension ID every time, enabling in-place updates instead of duplicates.
+# ==============================================================================
+
+name: Build and Release Extension
 
 on:
+#  push:
+#    tags:
+#      - 'v*'
   workflow_dispatch:
     inputs:
       ref:
         description: 'Branch or tag to run the workflow on'
         required: false
         default: 'master'
+        type: string
       release_tag:
         description: 'Optional release tag (overrides manifest.json version)'
         required: false
-        default: ''
-
-permissions:
-  contents: write
+        type: string
+      public_key:
+        description: 'Base64 Public Key (fills manifest.json "key"). Leave empty to use CRX_PUBLIC_KEY secret.'
+        required: false
+        type: string
+      private_key:
+        description: 'Private Key PEM content (optional, overrides CRX_PRIVATE_KEY secret).'
+        required: false
+        type: string
 
 jobs:
   build-and-release:
-    name: Build, package and publish release asset
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }}
-
-      - name: Get version from manifest.json or input
-        id: get_version
-        run: |
-          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
-            echo "version=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
-          else
-            version=$(node -e 'console.log(require("./manifest.json").version)')
-            echo "version=${version}" >> $GITHUB_OUTPUT
-          fi
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: 20
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build (vite)
+      - name: Build extension
         run: npm run build
 
-      - name: Package dist into ZIP
+      - name: Resolve Version and Tag
+        id: resolve_version
         run: |
-          mkdir -p release
-          cd dist
-          zip -r ../release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip .
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            TAG="${{ inputs.release_tag }}"
+            VERSION="${TAG#v}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          else
+            MANIFEST_VERSION=$(node -p "require('./dist/manifest.json').version || require('./manifest.json').version")
+            VERSION="$MANIFEST_VERSION"
+            TAG="v$VERSION"
+          fi
 
-      - name: Create GitHub Release and Upload Asset
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target tag: $TAG (version: $VERSION)"
+
+      - name: Inject Public Key into manifest.json
+        env:
+          PUB_KEY: ${{ inputs.public_key || secrets.CRX_PUBLIC_KEY }}
+        run: |
+          if [ -n "$PUB_KEY" ]; then
+            echo "Injecting public key into dist/manifest.json..."
+            node -e "
+              const fs = require('fs');
+              const path = 'dist/manifest.json';
+              const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+              manifest.key = process.env.PUB_KEY;
+              fs.writeFileSync(path, JSON.stringify(manifest, null, 2));
+            "
+            echo "Public key successfully injected."
+          else
+            echo "No public key provided. Skipping manifest key injection."
+          fi
+
+      - name: Package .zip Archive
+        run: |
+          VERSION="${{ steps.resolve_version.outputs.VERSION }}"
+          cd dist
+          zip -r "../unaware-sessions-v${VERSION}.zip" .
+          cd ..
+
+      - name: Setup Private Key and Package .crx
+        env:
+          PRIV_KEY: ${{ inputs.private_key || secrets.CRX_PRIVATE_KEY }}
+        run: |
+          if [ -z "$PRIV_KEY" ]; then
+            echo "Error: Private key is required to sign the .crx file."
+            echo "Provide it via the CRX_PRIVATE_KEY repository secret or the workflow input."
+            exit 1
+          fi
+
+          echo "$PRIV_KEY" > key.pem
+          chmod 600 key.pem
+
+          VERSION="${{ steps.resolve_version.outputs.VERSION }}"
+          npx crx pack dist -p key.pem -o "unaware-sessions-v${VERSION}.crx"
+
+          rm -f key.pem
+
+      - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          name: Unaware Sessions v${{ steps.get_version.outputs.version }}
-          target_commitish: ${{ github.event.inputs.ref }}
-          body: |
-            Automated build of Unaware Sessions (dist) and attached ZIP asset.
-          draft: false
-          prerelease: false
-          files: release/unaware-sessions-${{ steps.get_version.outputs.version }}.zip
+          tag_name: ${{ steps.resolve_version.outputs.TAG }}
+          name: Release ${{ steps.resolve_version.outputs.TAG }}
+          files: |
+            unaware-sessions-v${{ steps.resolve_version.outputs.VERSION }}.zip
+            unaware-sessions-v${{ steps.resolve_version.outputs.VERSION }}.crx
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
